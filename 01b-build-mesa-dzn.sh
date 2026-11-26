@@ -6,6 +6,7 @@
 # Usage: ./01b-build-mesa-dzn.sh [--ref TAG] [--prefix DIR] [--src DIR] [--platforms LIST]
 # Env:   MESA_REF (default: latest stable mesa-X.Y.Z tag), MESA_PREFIX (/opt/mesa-dzn),
 #        MESA_SRC (~/mesa-dzn-src), PLATFORMS (x11), MICROSOFT_CLC (enabled),
+#        SKIP_GPU_CHECK=1 (skip the /dev/dxg check, used by the Docker build)
 #        LLVM_VER (default: auto-detect highest version Debian ships all needed packages for)
 set -euo pipefail
 
@@ -26,7 +27,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-[ -e /dev/dxg ] || { echo "ERROR: /dev/dxg missing - fix WSL GPU passthrough first (00-windows-prep.ps1)."; exit 1; }
+[ "${SKIP_GPU_CHECK:-0}" = "1" ] || [ -e /dev/dxg ] || { echo "ERROR: /dev/dxg missing - fix WSL GPU passthrough first (00-windows-prep.ps1)."; exit 1; }
 
 echo "== Installing build dependencies =="
 sudo apt-get update
@@ -48,11 +49,10 @@ echo "Using LLVM $LLVM_VER"
 
 pkgs=(build-essential git meson ninja-build pkg-config python3-mako python3-yaml python3-packaging
       bison flex glslang-tools libexpat1-dev zlib1g-dev libzstd-dev libdrm-dev libvulkan-dev
-      libx11-xcb-dev libxcb-shm0-dev libxcb-dri2-0-dev libxcb-glx0-dev 
-      libdirectx-headers-dev spirv-tools libspirv-tools-dev spirv-headers directx-headers-dev
+      libdirectx-headers-dev spirv-tools libspirv-tools-dev spirv-headers
       "llvm-$LLVM_VER-dev" "clang-$LLVM_VER" "libclang-$LLVM_VER-dev" "libclang-cpp$LLVM_VER-dev"
       "libclang-common-$LLVM_VER-dev" "libclc-$LLVM_VER-dev" "libllvmspirvlib-$LLVM_VER-dev")
-[[ "$PLATFORMS" == *x11* ]] && pkgs+=(libx11-dev libxcb1-dev libxcb-dri3-dev libxcb-present-dev
+[[ "$PLATFORMS" == *x11* ]] && pkgs+=(libx11-dev libx11-xcb-dev libxcb1-dev libxcb-shm0-dev libxcb-dri2-0-dev libxcb-glx0-dev libxcb-dri3-dev libxcb-present-dev
       libxcb-sync-dev libxcb-randr0-dev libxcb-xfixes0-dev libxshmfence-dev libxrandr-dev)
 [[ "$PLATFORMS" == *wayland* ]] && pkgs+=(libwayland-dev wayland-protocols)
 
@@ -73,9 +73,14 @@ if [ -z "$MESA_REF" ]; then
     | sed 's#.*refs/tags/##' | grep -E '^mesa-[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1)"
 fi
 echo "== Cloning Mesa @ $MESA_REF =="
-rm -rf "$SRC"
-git clone --depth 1 --branch "$MESA_REF" https://gitlab.freedesktop.org/mesa/mesa.git "$SRC"
+if [ -d "$SRC/.git" ] && [ "$(git -C "$SRC" describe --tags --exact-match 2>/dev/null || true)" = "$MESA_REF" ]; then
+  echo "Reusing existing checkout in $SRC"
+else
+  rm -rf "$SRC"
+  git clone --depth 1 --branch "$MESA_REF" https://gitlab.freedesktop.org/mesa/mesa.git "$SRC"
+fi
 cd "$SRC"
+rm -rf build
 
 common=(
   -Dbuildtype=release
