@@ -1,21 +1,31 @@
 #!/usr/bin/env bash
 # Debian 13 (trixie) on WSL2: Vulkan on AMD via Mesa "dzn" (Vulkan -> D3D12 -> Windows AMD driver)
+# On native Linux this only installs the distro Vulkan packages (no dzn/WSL setup).
 # Env: BUILD_MESA=1 builds dzn from source automatically if the distro package lacks it.
 #      MESA_PREFIX (default /opt/mesa-dzn) is where a source-built dzn is looked for.
 set -euo pipefail
 cd "$(dirname "$0")"
 PREFIX="${MESA_PREFIX:-/opt/mesa-dzn}"
- 
-if [ ! -e /dev/dxg ]; then
-  echo "ERROR: /dev/dxg not found. WSL2 GPU passthrough is not active."
-  echo "Fix: install the AMD Adrenalin driver on Windows, run 'wsl --update', then 'wsl --shutdown'."
-  exit 1
-fi
- 
+
+is_wsl() { [ -e /dev/dxg ] || grep -qiE 'microsoft|wsl' /proc/version 2>/dev/null; }
+
 echo "== Installing packages =="
 sudo apt-get update
 sudo apt-get install -y mesa-vulkan-drivers libvulkan1 vulkan-tools mesa-utils
- 
+
+if ! is_wsl; then
+  echo
+  echo "Native Linux detected: using the system Vulkan driver (no dzn/WSL setup needed)."
+  echo "Verify with: ./02-verify-vulkan.sh"
+  exit 0
+fi
+
+if [ ! -e /dev/dxg ]; then
+  echo "ERROR: WSL2 detected but /dev/dxg not found. GPU passthrough is not active."
+  echo "Fix: install the AMD Adrenalin driver on Windows, run 'wsl --update', then 'wsl --shutdown'."
+  exit 1
+fi
+
 echo "== Making sure WSL GPU libs (libd3d12, libdxcore) are on the loader path =="
 if [ -d /usr/lib/wsl/lib ]; then
   echo "/usr/lib/wsl/lib" | sudo tee /etc/ld.so.conf.d/ld.wsl.conf >/dev/null
