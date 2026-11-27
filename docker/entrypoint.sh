@@ -3,7 +3,8 @@
 #   WSL2 (/dev/dxg present)  -> Mesa dzn   (needs -v /usr/lib/wsl:/usr/lib/wsl:ro)
 #   Linux (/dev/dri present) -> Mesa RADV
 # Usage: entrypoint.sh [server|chat|bench|check|<any command>] [extra llama.cpp args]
-# Env:   MODEL PORT HOST NGL CTX VK_DRIVER(auto|dzn|radv|cpu) LLAMA_CACHE
+# Env:   MODEL PORT HOST NGL CTX VK_DRIVER(auto|dzn|radv|cpu) LLAMA_CACHE MCP_CONFIG
+#        (MCP_CONFIG = path to the MCP/web-UI config JSON inside the container)
 set -euo pipefail
 
 MODEL="${MODEL:-Qwen/Qwen3-4B-GGUF:Q4_K_M}"
@@ -14,6 +15,14 @@ CTX="${CTX:-8192}"
 VK_DRIVER="${VK_DRIVER:-auto}"
 export LLAMA_CACHE="${LLAMA_CACHE:-/models/.cache}"
 mkdir -p "$LLAMA_CACHE" 2>/dev/null || true
+
+# Flag names differ between llama.cpp versions (--webui-* vs --ui-*); pick whichever this build has.
+mcp_args() {  # mcp_args LLAMA_SERVER_BIN CONFIG_FILE  -> sets MCP_ARGS
+  local help p=webui
+  help="$("$1" --help 2>&1 || true)"
+  if ! grep -qE -- '--(\[no-\])?webui-mcp-proxy' <<<"$help" && grep -qE -- '--(\[no-\])?ui-mcp-proxy' <<<"$help"; then p=ui; fi
+  MCP_ARGS=(--jinja "--$p-mcp-proxy" "--$p-config-file" "$2")
+}
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
@@ -63,7 +72,14 @@ case "$MODE" in
   check)
     vulkaninfo --summary || true
     llama-server --list-devices || true ;;
-  server) exec llama-server "${MODEL_ARGS[@]}" -ngl "$NGL" -c "$CTX" --host "$HOST" --port "$PORT" "$@" ;;
+  server)
+    MCP_ARGS=()
+    if [ -n "${MCP_CONFIG:-}" ]; then
+      [ -f "$MCP_CONFIG" ] || die "MCP config not found: $MCP_CONFIG"
+      mcp_args llama-server "$MCP_CONFIG"
+      echo "MCP: enabled (config $MCP_CONFIG)" >&2
+    fi
+    exec llama-server "${MODEL_ARGS[@]}" -ngl "$NGL" -c "$CTX" --host "$HOST" --port "$PORT" "${MCP_ARGS[@]}" "$@" ;;
   chat)   exec llama-cli    "${MODEL_ARGS[@]}" -ngl "$NGL" -c "$CTX" -cnv "$@" ;;
   bench)  exec llama-bench  "${MODEL_ARGS[@]}" -ngl "$NGL" "$@" ;;
   *)      exec "$MODE" "$@" ;;   # e.g. `bash`, `vulkaninfo`

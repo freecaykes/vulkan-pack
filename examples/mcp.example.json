@@ -1,0 +1,11 @@
+{
+    "systemMessage": "You are a helpful assistant. When the user asks for current information, use the available tools rather than relying on training data.",
+    "mcpServers": [
+        {
+            "url": "https://mcp.exa.ai/mcp",
+            "name": "exa",
+            "useProxy": true,
+            "enabled": true
+        }
+    ]
+}

@@ -67,6 +67,13 @@ On WSL2: WSL has no native AMD Vulkan driver. Mesa's `dzn` translates Vulkan to
 D3D12, which goes through `/dev/dxg` to the Windows AMD driver. On native Linux the
 distro driver is used directly, so dzn and `/dev/dxg` are not involved.
 
+### Docker
+
+Prefer containers? A single image works on both WSL2 and native Linux. See
+[docker/README.md](docker/README.md) for building the image, the required device
+passthrough (`/dev/dxg` on WSL2, `/dev/dri` on Linux), and running it with a model
+volume and environment variables.
+
 ### "dzn ICD not found" error (WSL2 only)
 
 Debian's `mesa-vulkan-drivers` can lack dzn. Build it from source
@@ -84,6 +91,39 @@ meson/LLVM than Debian 13 provides.
 
 Note: Debian has no unversioned `libclc-dev` / `libllvmspirvlib-dev`. `01b` auto-picks the highest LLVM
 version with all needed packages (LLVM 19 on trixie). Force one with `LLVM_VER=19 ./01b-build-mesa-dzn.sh`.
+
+## MCP (tool use via llama-server's web UI)
+
+llama-server has no MCP client of its own. MCP runs in the built-in web UI (your browser); the server only
+provides a CORS proxy (`--webui-mcp-proxy`, or `--ui-mcp-proxy` on newer builds) and loads a UI config file
+(`--webui-config-file`). Only HTTP(S) MCP servers (streamable HTTP) work; stdio and legacy SSE servers need a
+bridge. Server mode only (not chat/bench). The model must support tool calling (`--jinja` is added for you).
+
+Copy `examples/mcp.example.json`, edit it, and pass it with `--mcp-config FILE` (or `MCP_CONFIG=FILE`):
+
+```bash
+./run.sh --mcp-config my-mcp.json server
+MCP_CONFIG=my-mcp.json ./run.sh server
+./install.sh --mcp-config my-mcp.json --run server
+```
+
+When MCP is on, `run.sh` binds to `127.0.0.1` by default. Pass `--allow-remote` (or `-H`) to expose it; the
+proxy is an open relay, so anyone who can reach the server can make it fetch arbitrary URLs.
+
+Docker: mount the config read-only and point `MCP_CONFIG` at it inside the container. The image binds to
+`0.0.0.0` by default, so also set `HOST=127.0.0.1` unless you intend to expose it (the `-p` mapping still
+publishes it to the host):
+
+```bash
+docker run --rm -it --device /dev/dri --group-add video --group-add render \
+    -p 8080:8080 -v ~/models:/models \
+    -v "$PWD/my-mcp.json:/config/mcp.json:ro" \
+    -e MODEL=Qwen/Qwen3-4B-GGUF:Q4_K_M -e HOST=127.0.0.1 \
+    -e MCP_CONFIG=/config/mcp.json \
+    llama-vulkan:latest server
+```
+
+The file is used exactly as written, so it will contain any API keys: don't commit or share it.
 
 ## Scripts
 
@@ -118,10 +158,13 @@ Shared by `install.sh` and `run.sh`:
 -m, --model MODEL   Hugging Face repo[:quant] or path to a .gguf file
                     (default: Qwen/Qwen3-4B-GGUF:Q4_K_M)
 -p, --port PORT     server port (default: 8080)
--H, --host HOST     server bind address (default: 0.0.0.0)
+-H, --host HOST     server bind address (default: 0.0.0.0, or 127.0.0.1 when MCP is on)
 -n, --ngl N         layers offloaded to the GPU (default: 99)
 -c, --ctx N         context size (default: 8192)
 -d, --dir PATH      llama.cpp checkout (default: ~/llama.cpp)
+    --mcp-config FILE  MCP/web UI config JSON (see examples/mcp.example.json);
+                    server mode only (with install.sh, requires --run server)
+    --allow-remote  with MCP on, bind beyond localhost (the MCP proxy is an open relay)
 -h, --help          print usage and exit
 ```
 
@@ -151,6 +194,7 @@ HOST        default bind address
 NGL         default GPU layers
 CTX         default context size
 LLAMA_DIR   default llama.cpp checkout
+MCP_CONFIG  default MCP/web UI config JSON (server mode only; see --mcp-config)
 ```
 
 Flags override environment variables.
@@ -161,7 +205,13 @@ Flags override environment variables.
 ./install.sh --model Qwen/Qwen3-8B-GGUF:Q4_K_M --port 9000
 ./run.sh --model ~/models/qwen3-4b-q4.gguf --port 8081 --ctx 16384
 ./run.sh --port 9000 chat -- --temp 0.6     # args after -- go to llama.cpp
+
+# MCP (server mode): tools in the web UI, bound to localhost by default
+./run.sh --mcp-config my-mcp.json server
+MCP_CONFIG=my-mcp.json ./run.sh server
+./install.sh --mcp-config my-mcp.json --run server
 ```
+
 
 ## Troubleshooting
 
